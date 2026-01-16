@@ -1,0 +1,150 @@
+
+
+// --- Configuration ---
+#define DEBUG 1 // 0 или 1 Включаем отладочный вывод в Serial Monitor
+#define LOG_TO_SERIAL 1 //0 или 1  Оставляем логирование данных выключенным, т.к. DEBUG уже включён
+
+// --- Includes ---
+#include <Wire.h>
+#include "MechaQMC5883.h"
+#include <SoftwareSerial.h>
+
+// --- Constants ---
+const unsigned long SENSOR_READ_INTERVAL = 100; // milliseconds between sensor reads
+const unsigned long REQUEST_CHECK_INTERVAL = 100; // milliseconds between checking for request
+const byte REQUEST_BYTE = 0xAB; // Byte sent via SoftwareSerial to request data
+const int BUFFER_SIZE = 80; // Size of the data string buffer
+
+// --- Pin Definitions ---
+const int SW_RX_PIN = 2;
+const int SW_TX_PIN = 3;
+
+// --- Global Variables ---
+SoftwareSerial mySerial(SW_RX_PIN, SW_TX_PIN);
+MechaQMC5883 qmc;
+
+int last_mx = 0, last_my = 0, last_mz = 0;
+bool newDataAvailable = false;
+unsigned long lastSensorReadTime = 0;
+unsigned long lastRequestCheckTime = 0;
+
+char dataBuffer[BUFFER_SIZE]; // Buffer for the formatted data string
+
+void setup() {
+  Wire.begin();
+
+  // Инициализация Serial Monitor
+  Serial.begin(9600);
+  while (!Serial) {
+    ; // Ждём подключения Serial Monitor, если используется
+  }
+  Serial.println("Setup: Debug enabled, Serial Monitor initialized.");
+  Serial.println("Setup: Initializing QMC5883L...");
+  Serial.println("Setup: SoftwareSerial (2,3) at 4800 baud started.");
+  Serial.println("Setup: Ready to read sensor data and listen for requests.");
+
+  mySerial.begin(4800);
+
+  qmc.init();
+  // Example of setting mode (adjust as needed):
+  // qmc.setMode(Mode_Continuous, ODR_200Hz, RNG_2G, OSR_256);
+
+  Serial.println("Setup: Initialization complete.");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+
+  // --- Handle Sensor Reading ---
+  if (currentTime - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
+    int mx, my, mz;
+    float azimuth; // Not used in this version, but available
+
+    qmc.read(&mx, &my, &mz, &azimuth);
+
+    // Update stored values and flag if data actually changed or it's the first read
+    if (mx != last_mx || my != last_my || mz != last_mz || !newDataAvailable) {
+      last_mx = mx;
+      last_my = my;
+      last_mz = mz;
+      newDataAvailable = true; // Устанавливаем флаг, когда приходят новые данные
+      #if DEBUG
+        Serial.print("Loop: New sensor data read - MX=");
+        Serial.print(mx);
+        Serial.print(", MY=");
+        Serial.print(my);
+        Serial.print(", MZ=");
+        Serial.println(mz);
+        Serial.println("Loop: 'newDataAvailable' flag set to TRUE.");
+      #endif
+    }
+    lastSensorReadTime = currentTime;
+  }
+
+  // --- Handle SoftwareSerial Request Check ---
+  if (currentTime - lastRequestCheckTime >= REQUEST_CHECK_INTERVAL) {
+    if (mySerial.available() > 0) {
+      byte incomingByte = mySerial.read();
+      #if DEBUG
+        Serial.print("Loop: Received byte via SoftwareSerial (0x");
+        Serial.print(incomingByte, HEX);
+        Serial.print(" / ");
+        Serial.print(incomingByte);
+        Serial.println("). Checking for request...");
+      #endif
+
+      if (incomingByte == REQUEST_BYTE) {
+        #if DEBUG
+          Serial.println("Loop: Request byte (0xAB) received.");
+        #endif
+
+        if (newDataAvailable) {
+          // Format the data string into the buffer
+          int len = snprintf(dataBuffer, BUFFER_SIZE, "?!|1|Mag|Mg_x=|%d|Mg_y=|%d|Mg_z=|%d|#_\r\n", last_mx, last_my, last_mz);
+
+          if (len > 0 && len < BUFFER_SIZE) { // Check for successful formatting
+            mySerial.print(dataBuffer);
+            newDataAvailable = false; // Reset the flag after sending
+            #if DEBUG
+              Serial.print("Loop: Data sent via SoftwareSerial: ");
+              Serial.print(dataBuffer); // Печатаем отправленную строку для проверки
+              Serial.println("--- End of Sent Data ---");
+            #endif
+          } else {
+             Serial.println("ERROR: Failed to format data string (buffer too small or error).");
+             // Важно: в случае ошибки форматирования также сбрасываем флаг, чтобы не застрять
+             newDataAvailable = false;
+             #if DEBUG
+               Serial.println("Loop: Data flag reset due to formatting error.");
+             #endif
+          }
+        } else {
+          #if DEBUG
+            Serial.println("Loop: Request received, but no new data available to send.");
+          #endif
+        }
+        // Clear any remaining bytes in the SoftwareSerial buffer after processing
+        int remaining = mySerial.available();
+        if (remaining > 0) {
+            #if DEBUG
+                Serial.print("Loop: Clearing ");
+                Serial.print(remaining);
+                Serial.println(" remaining byte(s) in SoftwareSerial buffer.");
+            #endif
+            while (mySerial.available()) {
+              mySerial.read();
+            }
+        }
+      } else {
+          #if DEBUG
+            Serial.print("Loop: Received unexpected byte (0x");
+            Serial.print(incomingByte, HEX);
+            Serial.println(") via SoftwareSerial, ignoring.");
+          #endif
+      }
+    }
+    lastRequestCheckTime = currentTime;
+  }
+
+  // Other loop code can go here without blocking delays
+}
