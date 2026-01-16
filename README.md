@@ -1,0 +1,2 @@
+# sensor-arduino-nano--data-arduino-Mega--collector_pyserial_Port
+Unified sensor data collector and processor: reads serial data from Arduino, splits it by sensor type, merges records by timestamp, and saves raw structured output in versioned folders.  Русский (дубль): Универсальный сборщик и обработчик данных с датчиков: читает данные через Serial (Arduino), разделяет по типам датчиков, объединяет по времени.
