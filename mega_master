@@ -1,0 +1,222 @@
+
+#include <SoftwareSerial.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <RTClib.h>
+#include <SD.h>
+
+// SoftwareSerial: (RX, TX)
+SoftwareSerial device_1(10, 7);
+SoftwareSerial device_2(11, 8);
+SoftwareSerial device_3(12, 6);
+SoftwareSerial device_4(13, 5);
+
+RTC_DS1307 RTC;
+const int chipSelect = 53;
+
+// Глобальные переменные
+bool dostupZapis = true;
+bool zapis = false;
+char ch_buf[60];
+byte b_l = 0;  // изначально 0 — ОК
+unsigned long Pos = 0;
+
+// Функции
+void readFromDevice(SoftwareSerial &dev);
+void uslovie_zapis_rtc();
+void zapis_sd_rtc();
+void sbros_vPYSer();
+
+// --------------------------------------------------
+void setup() {
+  Serial.begin(9600);
+  Serial3.begin(9600);
+  Wire.begin();
+  RTC.begin();
+  while (!Serial); // для плат с родным USB (опционально для Mega)
+
+  if (!RTC.isrunning()) {
+    Serial.println(F("RTC is NOT running!"));
+    RTC.adjust(DateTime(__DATE__, __TIME__));
+  }
+
+  if (!SD.begin(chipSelect)) {
+    Serial.println(F("SD card failed or not present"));
+    while (1);
+  }
+  Serial.println(F("SD card initialized."));
+  Serial.println("1_SoftwareSerial_1");
+
+  device_1.begin(4800);
+  device_2.begin(4800);
+  device_3.begin(4800);
+  device_4.begin(4800);
+
+  device_1.println("1_SofS_1");
+  device_2.println("2_MasterSofS_2");
+}
+
+// --------------------------------------------------
+void loop() {
+  readFromDevice(device_1);
+  uslovie_zapis_rtc();
+  if (zapis) zapis_sd_rtc();
+
+  readFromDevice(device_2);
+  uslovie_zapis_rtc();
+  if (zapis) zapis_sd_rtc();
+
+  readFromDevice(device_3);
+  uslovie_zapis_rtc();
+  if (zapis) zapis_sd_rtc();
+
+  // Сброс данных по кнопке на A1
+  if (analogRead(A1) > 630) {
+    delay(300); // антидребезг
+    Serial.println();
+    Serial.print("analogRead(A1)=");
+    Serial.println(analogRead(A1));
+    sbros_vPYSer();
+  }
+}
+
+// --------------------------------------------------
+void readFromDevice(SoftwareSerial &dev) {
+  Serial.println("void readFromDevice");
+  dev.write(171);
+  dev.write(171);
+  dev.listen();
+
+  unsigned long start = millis();
+  while (!dev.available()) {
+    if (millis() - start > 2000) {
+      Serial.println("Timeout: No data from device");
+      return;
+    }
+    delay(250);
+  }
+
+  // !!! УДАЛЕНО: b_l = 0; <-- ЭТО БЫЛА ОШИБКА !!! протокол передачи данных начало ?! конец #_
+
+  while (dev.available()) {
+    Serial.println(" while (dev.available()=1");
+    if (dev.read() == '?' && dev.peek() == '!') {
+      byte it = 0;
+      while (it < 60 && dev.available()) {
+        ch_buf[it] = (char)dev.read();
+        Serial.print(ch_buf[it]);
+        if (ch_buf[it] == '#' && dev.peek() == '_') {
+          break;
+        }
+        it++;
+        
+      }
+      b_l = it;  // ← Устанавливаем ТОЛЬКО при успешном приёме
+      Serial.print("b_l="); Serial.println(b_l);
+
+      Serial.print("Received ch_buf="); Serial.println(ch_buf);
+      Serial3.println(ch_buf);
+     
+
+      // Сброс остатка
+      Serial.print("Leftover: ");
+      while (dev.available()) {
+         Serial.print(char(dev.read()));
+      }
+      return;
+    }
+  }
+  // Если пакет не распознан — b_l остаётся прежним (от предыдущего устройства)
+  // Это позволяет сохранить данные до записи
+}
+
+// --------------------------------------------------
+void uslovie_zapis_rtc() {
+  Serial.println("void uslovie_zapis_rtc()");
+  static byte lastSecond = 255;
+  DateTime now = RTC.now();
+  byte sec = now.second();
+
+  Serial.print(now.day()); Serial.print(":");
+  Serial.print(now.hour()); Serial.print(":");
+  Serial.print(now.minute()); Serial.print(":");
+  
+
+  if (sec % 2 == 0 && lastSecond != sec) {
+    if (dostupZapis && b_l > 0) {
+      zapis = true;
+      dostupZapis = false;
+      Serial.println(">>> Запись разрешена! zapis = true");
+    }
+    lastSecond = sec;
+  }
+
+  if (sec % 2 != 0 && lastSecond != sec) {
+    dostupZapis = true;
+    lastSecond = sec;
+    Serial.println(">>> Запись разблокирована (нечётная секунда)");
+  }
+
+  Serial.print("dostupZapis="); Serial.println(dostupZapis);
+  Serial.print("zapis="); Serial.println(zapis);
+}
+
+// --------------------------------------------------
+void zapis_sd_rtc() {
+  Serial.println("void zapis_sd_rtc()");
+  if (b_l == 0) {
+    Serial.println("Нет данных для записи (b_l == 0)");
+    zapis = false;
+    return;
+  }
+
+  DateTime dt1 = RTC.now();
+  File dataFile = SD.open("datalog.txt", FILE_WRITE);
+  if (!dataFile) {
+    Serial.println("Ошибка открытия datalog.txt для записи");
+    zapis = false;
+    return;
+  }
+
+  dataFile.print("!!|");
+  dataFile.print(dt1.day());
+  dataFile.print("|");
+  dataFile.print(dt1.hour());
+  dataFile.print("|");
+  dataFile.print(dt1.minute());
+  dataFile.print("|");
+  dataFile.write((uint8_t*)ch_buf, b_l);
+  dataFile.println("|");
+  dataFile.flush();
+  dataFile.close();
+
+  Serial.println(">>> Данные успешно записаны на SD");
+
+  zapis = false;
+  b_l = 0; // ← Обнуляем ТОЛЬКО после записи — правильно!
+}
+
+// --------------------------------------------------
+void sbros_vPYSer() {
+  Serial.println("void sbros_vPYSer()");
+  File dataFile = SD.open("datalog.txt");
+  if (!dataFile) {
+    Serial.println("Ошибка: не удалось открыть datalog.txt");
+    return;
+  }
+  unsigned long FSize = dataFile.size();
+  Serial.print("FSize="); Serial.println(FSize);
+  const unsigned long FTr_t = 5000;
+  Pos = (FSize > FTr_t) ? FSize - FTr_t : 0;
+  dataFile.seek(Pos);
+  Serial.print("Передача с позиции Pos="); Serial.println(Pos);
+  Serial.write('!');
+  Serial.write('!');
+  while (dataFile.available()) {
+    Serial.write(dataFile.read());
+  }
+  Serial.write('#');
+  Serial.write('#');
+  dataFile.close();
+  Serial.println("\n>>> Сброс данных завершён");
+}
