@@ -1,3 +1,5 @@
+video: https://rutube.ru/video/8e68f2f5c40bf09e35a846138067d6ea/?r=a/
+
 # sensor-arduino-nano--data-arduino-Mega--collector_pyserial_Port
 English:
 This tool collects serial data from Arduino-based multi-sensor devices, splits the stream into separate files by sensor type, merges records by timestamp, and saves a unified raw dataset in structured CSV format. All files—including the original stringTest.txt—are stored in sequentially numbered archive folders for versioned organization. Designed for reliability, minimal dependencies (pyserial, pandas), and easy integration into sensor logging workflows.
